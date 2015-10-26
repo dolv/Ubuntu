@@ -1,17 +1,37 @@
 #!/bin/bash
-SCRIPT_FOLDER=/home/usadmin/hometasks/task1/ 
-SERVER_LIST=$(echo $SCRIPT_FOLDER."client_hosts")
-echo SERVER_LIST
-ERROR_MESSAGE='0'
-LOG_FILE=
+SCRIPT_FOLDER=$(dirname $0)
+SERVER_LIST=client_hosts
+SERVER_LIST=$SCRIPT_FOLDER/$SERVER_LIST
+ERROR_MESSAGE=""
+EXIT_CODE=0
+LOG_FILE=datacopy.log
+LOG_FILE=$SCRIPT_FOLDER$LOG_FILE
+SCRIPT=${0/.*\//}
 
-if [ -r $SERVER_LIST ]; then
-echo "file exists"
-#    while IFS='' read -r line || [[ -n "$line" ]]; do
-#        echo "Text read from file: $line"
-#    done < "$1"
-else 
-    ERROR_MESSAGE="\r\nThe file containig client hosts list was not found. \r\nAborting. \r\nCheck SERVER_LIST variable in the [$0]\r\n"
+if [ $# -le 0 ]; then
+    ERROR_MESSAGE="\r\n\
+Please provide source file/folder as a command line agrument \r\n\
+Run command like this: \r\n\
+$SCRIPT /path_to_file/file_name or \r\n\
+$SCRIPT /path_to_folder/folder_name \r\n\
+Aborting.\r\n"
+    EXIT_CODE=1
+elif [ ! -s $SERVER_LIST ]; then
+    ERROR_MESSAGE="\r\n\
+The file containig client hosts list is empty. \r\n\
+Check $SERVER_LIST file content\r\n\
+Aborting.\r\n"
+    EXIT_CODE=2
+elif [ ! -r $SERVER_LIST ]; then
+    ERROR_MESSAGE="\r\n\
+The file containig client hosts list was not found. \r\n\
+Check SERVER_LIST variable in the [$SCRIPT] script file\r\n\
+Script is located $SCRIPT_FOLDER/$SCRIPT\r\nAborting.\r\n "
+    EXIT_CODE=2
 fi
 
+    
+
+
 echo -e "$ERROR_MESSAGE" 
+exit $EXIT_CODE
