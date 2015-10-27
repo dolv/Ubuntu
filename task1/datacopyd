@@ -1,26 +1,37 @@
 #!/bin/bash
-SCRIPT_FOLDER=$(dirname $0)
 SERVER_LIST=client_hosts
+LOG_FILE=datacopyd.log
+EXEC_TIME_LIMIT=$((60*5))
+SCRIPT_FOLDER=$(dirname $0)
 SERVER_LIST=$SCRIPT_FOLDER/$SERVER_LIST
 ERROR_MESSAGE=""
 EXIT_CODE=0
-LOG_FILE=datacopy.log
-LOG_FILE=$SCRIPT_FOLDER$LOG_FILE
+LOG_FILE=$SCRIPT_FOLDER/$LOG_FILE
 SCRIPT=${0/.*\//}
+RUN_HELP="Run command like this: \r\n$SCRIPT /path_to_file/file_name or \r\n$SCRIPT /path_to_folder/folder_name"
+
+function print_log(){
+    if [ -r $LOG_FILE ]; then
+        echo -e "$(date) [$SCRIPT] $1" >> "$LOG_FILE"
+    else 
+        logger "[$SCRIPT] $1"
+        echo -e "$1"
+    fi
+}
+
+if [ ! -r $LOG_FILE ]; then
+    LOG_FILE_CREATED=$(touch "$LOG_FILE")
+fi
 
 if [ $# -le 0 ]; then
     ERROR_MESSAGE="\r\n\
-Please provide source file/folder as a command line agrument \r\n\
-Run command like this: \r\n\
-$SCRIPT /path_to_file/file_name or \r\n\
-$SCRIPT /path_to_folder/folder_name \r\n\
+Please provide source file/folder as a command line agrument \r\n$RUN_HELP\r\n\
 Aborting.\r\n"
     EXIT_CODE=1
 elif [ $# -gt 1 ]; then
     ERROR_MESSAGE="\r\n\
-The scrip file takes the only one command line argument\n\r\
-Run command like this: \r\n\
-Aborting. \r\n"
+The script takes the only one command line argument\n\r$RUN_HELP\r\n\
+Aborting.\r\n"
     EXIT_CODE=1
 elif [ ! -s $SERVER_LIST ]; then
     ERROR_MESSAGE="\r\n\
@@ -35,13 +46,31 @@ Check SERVER_LIST variable in the [$SCRIPT] script file\r\n\
 Script is located $SCRIPT_FOLDER/$SCRIPT\r\nAborting.\r\n "
     EXIT_CODE=2
 fi
-HOSTS_COUNT=$(grep -E . client_hosts | wc -l | cut -d' ' -f 1)
-#export $SERVER_LIST
+
+
+if [ ! $EXIT_CODE -eq 0 ]; then
+    print_log "$ERROR_MESSAGE" 
+    exit $EXIT_CODE
+fi
+
+print_log "Script execution initiated."
+print_log "Script initiation string: $SCRIPT $@"
+
+SCRIPT_INIT_TIME=$(date -u +"%s")
+HOSTS_COUNT=$(grep -E . client_hosts | grep -E '^[^#;]' | wc -l | cut -d' ' -f 1)
+export  PROCESSED_HOSTS
+
 while read -r host 
 do
-    echo "Processing the host - $host"
+    TIME_ELAPSED=$(( $(date -u +"%s")-$SCRIPT_INIT_TIME))
+    if [ $(($TIME_ELAPSED - $EXEC_TIME_LIMIT)) -gt 0 ]; then
+        print_log "Execution time exceded provided time limit of $EXEC_TIME_LIMIT seconds.\r\nAbotring.\r\n"
+    fi
 
-done < <(cat "$SERVER_LIST"| grep -E .) 
+    print_log "$(printf "Processing host [%03d/%03d] - $host " "$(($PROCESSED_HOSTS + 1))" "$HOSTS_COUNT")"
+    sshcon_status=$(ssh -o BatchMode=yes -o ConnectTimeout=5 $ip echo ok 2>&1)
 
-echo -e "$ERROR_MESSAGE" 
-exit $EXIT_CODE
+    PROCESSED_HOSTS=$(( $PROCESSED_HOSTS + 1))
+
+done < <(cat "$SERVER_LIST"| grep -E . | grep '^[^#;]') 
+
