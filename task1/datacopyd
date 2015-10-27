@@ -16,6 +16,12 @@ $SCRIPT /path_to_file/file_name or \r\n\
 $SCRIPT /path_to_folder/folder_name \r\n\
 Aborting.\r\n"
     EXIT_CODE=1
+elif [ $# -gt 1 ]; then
+    ERROR_MESSAGE="\r\n\
+The scrip file takes the only one command line argument\n\r\
+Run command like this: \r\n\
+Aborting. \r\n"
+    EXIT_CODE=1
 elif [ ! -s $SERVER_LIST ]; then
     ERROR_MESSAGE="\r\n\
 The file containig client hosts list is empty. \r\n\
@@ -29,9 +35,13 @@ Check SERVER_LIST variable in the [$SCRIPT] script file\r\n\
 Script is located $SCRIPT_FOLDER/$SCRIPT\r\nAborting.\r\n "
     EXIT_CODE=2
 fi
+HOSTS_COUNT=$(grep -E . client_hosts | wc -l | cut -d' ' -f 1)
+#export $SERVER_LIST
+while read -r host 
+do
+    echo "Processing the host - $host"
 
-    
-
+done < <(cat "$SERVER_LIST"| grep -E .) 
 
 echo -e "$ERROR_MESSAGE" 
 exit $EXIT_CODE
