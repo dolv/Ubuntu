@@ -1,5 +1,7 @@
 #!/bin/bash
+#----- Global variables declaration ---------------------------
 SERVER_LIST=client_hosts
+DEST_DIR=~/Ubuntu/task1/DEST
 LOG_FILE=datacopyd.log
 EXEC_TIME_LIMIT=$((60*5))
 SCRIPT_FOLDER=$(dirname $0)
@@ -10,17 +12,47 @@ LOG_FILE=$SCRIPT_FOLDER/$LOG_FILE
 SCRIPT=${0/.*\//}
 RUN_HELP="Run command like this: \r\n$SCRIPT /path_to_file/file_name or \r\n$SCRIPT /path_to_folder/folder_name"
 
+# ---- Helper functions definition ----------------------------
 function print_log(){
     if [ -r $LOG_FILE ]; then
         echo -e "$(date) [$SCRIPT] $1" >> "$LOG_FILE"
-    else 
-        logger "[$SCRIPT] $1"
+    else
+        IFS=';' read -ra LINES <<< "$(echo "[$SCRIPT] $1" | sed 's/\\r\\n/;/g')" 
+        for line in "${LINES[@]}"; do
+            logger "$line"
+        done
         echo -e "$1"
     fi
 }
 
+function copy_files(){
+if $( ssh -q $host [ -e \"$1\" ]) ; then
+    if $(ssh -q $host [ -r \"$1\" ]); then
+        if $(ssh -q $host [ -d \"$1\" ]); then
+            print_log "--->processing the directory $host:$1"
+        else 
+            print_log "--->processing the file $host:$1"
+        fi
+        ssh -q $host tar -czp \"$1\" | tar -C $DEST_DIR -xzp 
+    else
+        print_log "Could not read file $1"
+        echo -1
+    fi
+else
+    print_log "File $1 does not exist"
+    echo -1
+fi
+}
+
+
+# ------- INITIAL VERIFICATIONS ------------------------ 
 if [ ! -r $LOG_FILE ]; then
-    LOG_FILE_CREATED=$(touch "$LOG_FILE")
+    LOG_FILE_CREATED=$(touch "$LOG_FILE" 2>/dev/null )
+fi
+
+if [ ! -d $DEST_DIR ]; then
+    mkdir -p $DEST_DIR ||  ERROR_MESSAGE="Destination folder can not be created. Check permissions."
+    EXIT_CODE=3
 fi
 
 if [ $# -le 0 ]; then
@@ -53,6 +85,7 @@ if [ ! $EXIT_CODE -eq 0 ]; then
     exit $EXIT_CODE
 fi
 
+# ----------- MAIN body goes here -------------------------------
 print_log "Script execution initiated."
 print_log "Script initiation string: $SCRIPT $@"
 
@@ -68,9 +101,19 @@ do
     fi
 
     print_log "$(printf "Processing host [%03d/%03d] - $host " "$(($PROCESSED_HOSTS + 1))" "$HOSTS_COUNT")"
-    sshcon_status=$(ssh -o BatchMode=yes -o ConnectTimeout=5 $ip echo ok 2>&1)
+    sshcon_status=$(ssh -o BatchMode=yes -o ConnectTimeout=5 $host echo CONNECTION ESTABLISHED 2>&1)
+    print_log "Trying connect to $host"
+    print_log "$sshcon_status"
+    
+    if [ "$sshcon_status" = "CONNECTION ESTABLISHED" ]; then
+        copy_files $1
+    else
+        print_log "Skipping..."
+        continue
+    fi
 
     PROCESSED_HOSTS=$(( $PROCESSED_HOSTS + 1))
 
 done < <(cat "$SERVER_LIST"| grep -E . | grep '^[^#;]') 
 
+exit $EXIT_CODE
