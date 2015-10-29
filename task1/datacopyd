@@ -28,7 +28,7 @@ function print_log(){
 function copy_files(){
 if $( ssh -q $host [ -e \"$1\" ]) ; then
     if $(ssh -q $host [ -r \"$1\" ]); then
-        print_log "--->processing the target $host:$1"
+        print_log "Processing the target $host:$1"
         tar_res=$(ssh -q $host sudo tar -czpf ~/backup.tar.gz -C \"$1\" . >/dev/null && echo ok)
         if [ "$tar_res" = "ok" ]; then
 #            set -x
@@ -38,13 +38,16 @@ if $( ssh -q $host [ -e \"$1\" ]) ; then
                 print_log "Backup file successfully transferred."
                 cd $DEST
                 tar -xzpf $DEST_DIR/backup.tar.gz 
+                echo 0
             fi
 #            set +x
         else 
             print_log "Error occured while creating TAR on remote host $host"
+            echo -1
         fi
     else
         print_log "Could not read file $1"
+        echo -1
     fi
 else
     print_log "File $1 does not exist"
@@ -107,25 +110,33 @@ print_log "Script initiation string: $SCRIPT $@"
 HOSTS_COUNT=$(grep -E . $SERVER_LIST | grep -E '^[^#;]' | wc -l | cut -d' ' -f 1)
 export  PROCESSED_HOSTS
 #set -x
-IFS=$'\r\n' GLOBIGNORE='*' :; HOSTS=($(cat "$SERVER_LIST"| grep -E . | grep -E '^[^#;]'))
+IFS=$'\r\n' HOSTS=($(cat "$SERVER_LIST"| grep -E . | grep -E '^[^#;]'))
 for host in "${HOSTS[@]}"; do
-    if [ $(($TIME_ELAPSED - $EXEC_TIME_LIMIT)) -gt 0 ]; then
-        print_log "Execution time exceded provided time limit of $EXEC_TIME_LIMIT seconds.\r\nAbotring.\r\n"
-        EXIT_CODE=10
-        exit $EXIT_CODE 
-    fi
 
-    print_log "$(printf "Processing host [%03d/%03d] - $host " "$(($PROCESSED_HOSTS + 1))" "$HOSTS_COUNT")"
+    print_log "$(printf "=====>Processing host [%03d/%03d] - $host " "$(($PROCESSED_HOSTS + 1))" "$HOSTS_COUNT")"
     sshcon_status=$(ssh -o BatchMode=yes -o ConnectTimeout=5 $host echo CONNECTION ESTABLISHED 2>&1)
     print_log "Trying connect to $host"
     print_log "$sshcon_status"
     
     if [ "$sshcon_status" = "CONNECTION ESTABLISHED" ]; then
-    PROCESSED_HOSTS=$(( $PROCESSED_HOSTS + 1))
-        copy_files $1
+        COPY_EXIT=$(copy_files $1)
+        while [ -z "$COPY_EXIT" ]
+        do
+            if [ $(($TIME_ELAPSED - $EXEC_TIME_LIMIT)) -gt 0 ]; then
+                print_log "Execution time exceded provided time limit of $EXEC_TIME_LIMIT seconds.\r\nAbotring.\r\n"
+                EXIT_CODE=10
+                exit $EXIT_CODE 
+            fi
+        done
     else
         print_log "Skipping..."
     fi
+
+    PROCESSED_HOSTS=$(( $PROCESSED_HOSTS + 1))
+
 done
+print_log "$(printf "====>%d out of %d hosts has beed processed. " "$(($PROCESSED_HOSTS))" "$HOSTS_COUNT")"
+print_log "THE TASK HAS COMPLETED."
+
 #set +x
 exit $EXIT_CODE
