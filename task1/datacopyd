@@ -9,9 +9,9 @@ SERVER_LIST=$SCRIPT_FOLDER/$SERVER_LIST
 ERROR_MESSAGE=""
 EXIT_CODE=0
 LOG_FILE=$SCRIPT_FOLDER/$LOG_FILE
-SCRIPT=${0/.*\//}
+SCRIPT=$(basename $0)
 RUN_HELP="Run command like this: \r\n$SCRIPT /path_to_file/file_name or \r\n$SCRIPT /path_to_folder/folder_name"
-
+#export LOG_FILE
 # ---- Helper functions definition ----------------------------
 function print_log(){
     if [ -r $LOG_FILE ]; then
@@ -28,26 +28,40 @@ function print_log(){
 function copy_files(){
 if $( ssh -q $host [ -e \"$1\" ]) ; then
     if $(ssh -q $host [ -r \"$1\" ]); then
-        if $(ssh -q $host [ -d \"$1\" ]); then
-            print_log "--->processing the directory $host:$1"
+        print_log "--->processing the target $host:$1"
+        tar_res=$(ssh -q $host sudo tar -czpf ~/backup.tar.gz -C \"$1\" . >/dev/null && echo ok)
+        if [ "$tar_res" = "ok" ]; then
+#            set -x
+            scp -q $host:~/backup.tar.gz $DEST_DIR
+            if [ "$(md5sum $DEST_DIR/backup.tar.gz|cut -d' ' -f1)" = \
+                 "$(ssh -q $host md5sum ~/backup.tar.gz| cut -d' ' -f1)" ]; then
+                print_log "Backup file successfully transferred."
+                cd $DEST
+                tar -xzpf $DEST_DIR/backup.tar.gz 
+            fi
+#            set +x
         else 
-            print_log "--->processing the file $host:$1"
+            print_log "Error occured while creating TAR on remote host $host"
         fi
-        ssh -q $host tar -czp \"$1\" | tar -C $DEST_DIR -xzp 
     else
         print_log "Could not read file $1"
-        echo -1
     fi
 else
     print_log "File $1 does not exist"
-    echo -1
 fi
 }
 
 
-# ------- INITIAL VERIFICATIONS ------------------------ 
+# ------- INITIAL VERIFICATIONS ------------------------
+if [ $(ps aux | grep "$SCRIPT" | wc -l) -lt 2 ]; then
+    ERROR_MESSAGE="Script has already been running"
+    EXIT_CODE=-1
+fi
+ 
 if [ ! -r $LOG_FILE ]; then
-    LOG_FILE_CREATED=$(touch "$LOG_FILE" 2>/dev/null )
+    touch "$LOG_FILE" 2>/dev/null
+else
+    cat /dev/null > $LOG_FILE 
 fi
 
 if [ ! -d $DEST_DIR ]; then
@@ -86,18 +100,19 @@ if [ ! $EXIT_CODE -eq 0 ]; then
 fi
 
 # ----------- MAIN body goes here -------------------------------
+SCRIPT_INIT_TIME=$(date -u +"%s")
+TIME_ELAPSED=$(( $(date -u +"%s") - $SCRIPT_INIT_TIME ))
 print_log "Script execution initiated."
 print_log "Script initiation string: $SCRIPT $@"
-
-SCRIPT_INIT_TIME=$(date -u +"%s")
-HOSTS_COUNT=$(grep -E . client_hosts | grep -E '^[^#;]' | wc -l | cut -d' ' -f 1)
+HOSTS_COUNT=$(grep -E . $SERVER_LIST | grep -E '^[^#;]' | wc -l | cut -d' ' -f 1)
 export  PROCESSED_HOSTS
-
-while read -r host 
-do
-    TIME_ELAPSED=$(( $(date -u +"%s")-$SCRIPT_INIT_TIME))
+#set -x
+IFS=$'\r\n' GLOBIGNORE='*' :; HOSTS=($(cat "$SERVER_LIST"| grep -E . | grep -E '^[^#;]'))
+for host in "${HOSTS[@]}"; do
     if [ $(($TIME_ELAPSED - $EXEC_TIME_LIMIT)) -gt 0 ]; then
         print_log "Execution time exceded provided time limit of $EXEC_TIME_LIMIT seconds.\r\nAbotring.\r\n"
+        EXIT_CODE=10
+        exit $EXIT_CODE 
     fi
 
     print_log "$(printf "Processing host [%03d/%03d] - $host " "$(($PROCESSED_HOSTS + 1))" "$HOSTS_COUNT")"
@@ -106,14 +121,11 @@ do
     print_log "$sshcon_status"
     
     if [ "$sshcon_status" = "CONNECTION ESTABLISHED" ]; then
+    PROCESSED_HOSTS=$(( $PROCESSED_HOSTS + 1))
         copy_files $1
     else
         print_log "Skipping..."
-        continue
     fi
-
-    PROCESSED_HOSTS=$(( $PROCESSED_HOSTS + 1))
-
-done < <(cat "$SERVER_LIST"| grep -E . | grep '^[^#;]') 
-
+done
+#set +x
 exit $EXIT_CODE
