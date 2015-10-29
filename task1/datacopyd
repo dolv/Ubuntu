@@ -119,6 +119,7 @@ for host in "${HOSTS[@]}"; do
     print_log "$sshcon_status"
     
     if [ "$sshcon_status" = "CONNECTION ESTABLISHED" ]; then
+        COPY_EXIT=''
         COPY_EXIT=$(copy_files $1)
         while [ -z "$COPY_EXIT" ]
         do
