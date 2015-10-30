@@ -13,7 +13,7 @@ if ( NR == FNR ){
 END {
     for (key in avg) avg[key] /= totals[key]
     asort(avg, dest)
-    for (key in avg)
-        for (i in dest)
+    for (i in dest)
+        for (key in avg)
             if (dest[i] == avg[key] && key!="") printf "%-15s %4.0f\n", sensors[key], avg[key]
 }
