@@ -3,6 +3,8 @@
 SERVER_LIST=client_hosts
 DEST_DIR=~/Ubuntu/task1/DEST
 LOG_FILE=datacopyd.log
+SSH_ID_RSA=~/.ssh/id_rsa_srv 
+SSH_COMMAND="ssh -i $SSH_ID_RSA -q "
 EXEC_TIME_LIMIT=$((60*5))
 SCRIPT_FOLDER=$(dirname $0)
 SERVER_LIST=$SCRIPT_FOLDER/$SERVER_LIST
@@ -26,16 +28,17 @@ function print_log(){
 }
 
 function copy_files(){
-if $( ssh -q $host [ -e \"$1\" ]) ; then
-    if $(ssh -q $host [ -r \"$1\" ]); then
+#set -x
+if $( ssh -i $SSH_ID_RSA -q  $host [ -e \"$1\" ]) ; then
+    if $( ssh -i $SSH_ID_RSA -q  $host [ -r \"$1\" ]); then
         print_log "Processing the target $host:$1"
-        tar_res=$(ssh -q $host sudo tar -czpf ~/backup.tar.gz -C \"$1\" . >/dev/null && echo ok)
+        tar_res=$( ssh -i $SSH_ID_RSA -q  $host sudo tar -czpf ~/backup.tar.gz -C \"$1\" . >/dev/null && echo ok)
         if [ "$tar_res" = "ok" ]; then
 #            set -x
-            scp -q $host:~/backup.tar.gz $DEST_DIR
+            scp -q -i $SSH_ID_RSA $host:~/backup.tar.gz $DEST_DIR
             if [ "$(md5sum $DEST_DIR/backup.tar.gz|cut -d' ' -f1)" = \
-                 "$(ssh -q $host md5sum ~/backup.tar.gz| cut -d' ' -f1)" ]; then
-                print_log "Backup file successfully transferred."
+                 "$( ssh -i $SSH_ID_RSA -q  $host md5sum ~/backup.tar.gz| cut -d' ' -f1)" ]; then
+                print_log "BACKUP FILE SUCCESSFULLY TRANSFERRED."
                 cd $DEST
                 tar -xzpf $DEST_DIR/backup.tar.gz 
                 echo 0
@@ -56,9 +59,9 @@ fi
 
 
 # ------- INITIAL VERIFICATIONS ------------------------
-if [ $(ps aux | grep "$SCRIPT" | wc -l) -lt 2 ]; then
-    ERROR_MESSAGE="Script has already been running"
-    EXIT_CODE=-1
+if [ $(ps aux | grep -E "^$USER.*\bbash.*\b$SCRIPT$" | wc -l) -gt 1 ]; then
+    print_log "Script has already been running"
+    exit -1
 fi
  
 if [ ! -r $LOG_FILE ]; then
@@ -112,12 +115,12 @@ export  PROCESSED_HOSTS
 #set -x
 IFS=$'\r\n' HOSTS=($(cat "$SERVER_LIST"| grep -E . | grep -E '^[^#;]'))
 for host in "${HOSTS[@]}"; do
-
     print_log "$(printf "=====>Processing host [%03d/%03d] - $host " "$(($PROCESSED_HOSTS + 1))" "$HOSTS_COUNT")"
-    sshcon_status=$(ssh -o BatchMode=yes -o ConnectTimeout=5 $host echo CONNECTION ESTABLISHED 2>&1)
     print_log "Trying connect to $host"
+    sshcon_status=$( ssh -i $SSH_ID_RSA  -o BatchMode=yes -o ConnectTimeout=5 $host echo CONNECTION ESTABLISHED 2>&1)
+    sleep 5
     print_log "$sshcon_status"
-    
+
     if [ "$sshcon_status" = "CONNECTION ESTABLISHED" ]; then
         COPY_EXIT=''
         COPY_EXIT=$(copy_files $1)
