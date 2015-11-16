@@ -17,6 +17,7 @@ LOG_FILE = "datacopy.py.log"
 REMOTE_BACKUP = '~/backup.tar.gz'
 REMOTE_BACKUP = os.path.expanduser(REMOTE_BACKUP)
 LOCAL_BACKUP = DEST_DIR + "/" + os.path.basename(REMOTE_BACKUP)
+# LOCAL_BACKUP = DEST_DIR + "/tttt.tar.gz"
 LOCAL_BACKUP = os.path.expanduser(LOCAL_BACKUP)
 SSH_ID_RSA = "~/.ssh/id_rsa_srv"
 EXEC_TIME_LIMIT = 60*5
@@ -47,7 +48,8 @@ class HostList:
                         self.hostset.add(Host(line, 22))
                     elif regexp['hostPort'].match(line):
                         line = line.split(':')
-                        line[0] = line[0][:-1] if line[0][-1] == '.' else line[0]
+                        line[0] = line[0][:-1] if line[0][-1] == '.' \
+                            else line[0]
                         self.hostset.add(Host(line[0], line[1]))
         else:
             print_log("Provides path" + path + "does not exist.")
@@ -80,7 +82,7 @@ class Host:
         self.isConnected = False
 
     def openChannel(self):
-        self.chan = self.transport.open_session()
+        self.chan = self.ssh_client.get_transport().open_session()
 
     def __str__(self):
         return self.address + ":" + str(self.port)
@@ -112,7 +114,8 @@ class Host:
 
     def sshConnect(self):
         if not self.isConnected:
-            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            self.ssh_client.set_missing_host_key_policy(
+                paramiko.AutoAddPolicy())
             key = self.getKey(SSH_ID_RSA)
             try:
                 self.ssh_client.connect(self.address,
@@ -120,14 +123,14 @@ class Host:
                                         username=pwd.getpwuid(os.getuid())[0],
                                         pkey=key,
                                         timeout=5)
-                self.transport = self.ssh_client.get_transport()
-                self.sftp = self.transport.open_sftp_client()
+                self.sftp = self.ssh_client.open_sftp()
                 self.isConnected = True
                 print_log("SSH connection has been established.")
                 return True
-            except (paramiko.BadHostKeyException, paramiko.AuthenticationException,
+            except (paramiko.BadHostKeyException,
+                    paramiko.AuthenticationException,
                     paramiko.ssh_exception.NoValidConnectionsError) as e:
-                print_log(e.strerror)
+                print_log(str(e))
                 return False
         else:
             return True
@@ -164,40 +167,42 @@ class Host:
                       filename + " > /dev/null && echo ok"
             tar_res = self.execRemoteCommand(command)
             if (tar_res[:2] == "ok"):
-                print_log("Reamote backup file " + REMOTE_BACKUP + " created.")
-                self.openChannel()
+                print_log("Remote backup file " + REMOTE_BACKUP + " created.")
+                chown_res = False
+                command = "sudo chown " + pwd.getpwuid(os.getuid())[0] + ":" +\
+                    pwd.getpwuid(os.getuid())[0] + " " +\
+                    REMOTE_BACKUP + " && echo ok"
+                chown_res = self.execRemoteCommand(command)
+                if (chown_res[:2] == "ok"):
+                    print_log("Changed permissions for remote backup file.")
                 fileExists(LOCAL_BACKUP)
-                local_file_data = open(LOCAL_BACKUP, "rb").read()
-                remote_file_data = self.sftp.open(REMOTE_BACKUP).read()
-                self.sftp.get(remote_file_data, local_file_data, callback=None)
+                local_f = open(LOCAL_BACKUP, "w+")
+                remote_f = self.sftp.open(REMOTE_BACKUP, 'rb').read()
+                local_f.write(remote_f)
                 if fileExists(LOCAL_BACKUP):
                     self.openChannel()
-                    md1 = self.getRemoteFileMD5Hash(REMOTE_BACKUP)
+                    command = "md5sum " + REMOTE_BACKUP +\
+                        " | awk '{print $1}'"
+                    md1 = self.execRemoteCommand(command)
+                    print md1
                     md2 = hashlib.md5(LOCAL_BACKUP).hexdigest()
+                    print md2
                     if (md1 == md2):
                         print_log("Bachup file transferred SUCCESSFULLY.")
                         return True
                     else:
-                        print_log("Remote backup file hash differs from local one.")
-                        print_log("It is recommended to run backup procedure again for the host.")
+                        print_log("Remote backup file hash differs " +
+                                  "from local one.")
+                        print_log("It is recommended to run backup " +
+                                  "procedure again for the host.")
                         return False
                 else:
-                    print_log("An Error occured while transferring a bachup archive file")
+                    print_log("An Error occured while transferring a" +
+                              "bachup archive file")
                     print_log("Try retransfer it manually")
                     return False
         else:
             return False
-
-    def getRemoteFileMD5Hash(self, filename):
-        if (self.isConnected):
-            sftpFile = paramiko.sftp_file.SFTPFile(self.sftp,
-                                                   filename,
-                                                   mode='r',
-                                                   bufsize=-1)
-            return sftpFile.check("md5")
-        else:
-            print_log("Could not get remote file hash...")
-            return None
 
 
 # ---- Helper functions definition ----------------------------
@@ -257,7 +262,8 @@ if (len(hostList.hostset) > 0):
     i = 0
     for host in hostList.hostset:
         i += 1
-        mesg = "===> Processing host [{0:0" + str(len(str(len(hostList.hostset)))) + "d}"
+        mesg = "===> Processing host [{0:0" + str(len(
+            str(len(hostList.hostset)))) + "d}"
         mesg = mesg.format(i)
         mesg += "/" + '{0:d}'.format(len(hostList.hostset))
         mesg += "] " + host.address + ":" + str(host.port)
@@ -269,7 +275,7 @@ if (len(hostList.hostset) > 0):
             print result
 #             while not result:
 #                 if (time.time()-initTime > EXEC_TIME_LIMIT):
-#                     print_log("Execution time exceded provided time limit of" +
+#                     print_log("Execution time exceded provided time limit of"+
 #                               EXEC_TIME_LIMIT + " seconds." + os.linesep +
 #                               "Abotring." + os.linesep)
 #                     sys.exit(10)
