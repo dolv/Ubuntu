@@ -6,9 +6,10 @@ import pwd
 import syslog
 import time
 import paramiko
-# import tarfile
+import scp
 import StringIO
 import hashlib
+# import subprocess
 # ----- Global variables declaration ---------------------------
 SERVER_LIST = "client_hosts"
 DEST_DIR = "~/Ubuntu/task1/DEST"
@@ -16,11 +17,8 @@ DEST_DIR = os.path.expanduser(DEST_DIR)
 LOG_FILE = "datacopy.py.log"
 REMOTE_BACKUP = '~/backup.tar.gz'
 REMOTE_BACKUP = os.path.expanduser(REMOTE_BACKUP)
-LOCAL_BACKUP = DEST_DIR + "/" + os.path.basename(REMOTE_BACKUP)
-# LOCAL_BACKUP = DEST_DIR + "/tttt.tar.gz"
-LOCAL_BACKUP = os.path.expanduser(LOCAL_BACKUP)
 SSH_ID_RSA = "~/.ssh/id_rsa_srv"
-EXEC_TIME_LIMIT = 60*5
+EXEC_TIME_LIMIT = 30
 SCRIPT_FOLDER = os.path.dirname(sys.argv[0])
 SERVER_LIST = SCRIPT_FOLDER + "/" + SERVER_LIST
 ERROR_MESSAGE = ""
@@ -76,13 +74,9 @@ class Host:
     def __init__(self, address, port=22):
         self.port = port
         self.address = address
-        self.chan = None
         self.ssh_client = paramiko.SSHClient()
         self.sftp = None
         self.isConnected = False
-
-    def openChannel(self):
-        self.chan = self.ssh_client.get_transport().open_session()
 
     def __str__(self):
         return self.address + ":" + str(self.port)
@@ -95,22 +89,9 @@ class Host:
 
     def sshClose(self):
         if (self.isConnected):
-            self.ssh_client.close()
             self.sftp.close()
+            self.ssh_client.close()
             print_log("SSH connection has been closed.")
-
-    def isConnectableViaSSH(self):
-        if not self.isConnected:
-            self.sshConnect()
-        if self.isConnected:
-            data = self.execRemoteCommand('echo OK')
-            self.sshClose()
-            if (data[:2] == "OK"):
-                return True
-            else:
-                return False
-        else:
-            return False
 
     def sshConnect(self):
         if not self.isConnected:
@@ -137,9 +118,10 @@ class Host:
 
     def execRemoteCommand(self, command):
         if self.isConnected:
-            self.openChannel()
+            self.ssh_client.get_transport().open_session()
             try:
-                stdin, stdout, stderr = self.ssh_client.exec_command(command)
+                stdin, stdout, stderr = \
+                    self.ssh_client.exec_command(command, timeout=None)
                 return stdout.read() + stderr.read()
             except (paramiko.SSHException) as e:
                 print_log("SSH error({0}): {1}".format(e.errno, e.strerror))
@@ -148,8 +130,7 @@ class Host:
             return False
 
     def remoteFileExists(self, file):
-        if (self.isConnected):
-            self.openChannel()
+        if self.isConnected:
             try:
                 self.sftp.stat(file)
                 return True
@@ -162,33 +143,47 @@ class Host:
 
     def copyRemoteFile(self, filename):
         if self.remoteFileExists(filename):
+            print_log("Remote file exists. " +
+                      "Archiving process has been initiated")
             tar_res = False
             command = "sudo tar -czpf " + REMOTE_BACKUP + ' ' + \
                       filename + " > /dev/null && echo ok"
             tar_res = self.execRemoteCommand(command)
+
             if (tar_res[:2] == "ok"):
                 print_log("Remote backup file " + REMOTE_BACKUP + " created.")
                 chown_res = False
-                command = "sudo chown " + pwd.getpwuid(os.getuid())[0] + ":" +\
-                    pwd.getpwuid(os.getuid())[0] + " " +\
+                command = "sudo chown " + str(pwd.getpwuid(os.getuid())[2]) + \
+                    ":" + str(pwd.getpwuid(os.getuid())[3]) + " " +\
                     REMOTE_BACKUP + " && echo ok"
                 chown_res = self.execRemoteCommand(command)
                 if (chown_res[:2] == "ok"):
                     print_log("Changed permissions for remote backup file.")
-                fileExists(LOCAL_BACKUP)
-                local_f = open(LOCAL_BACKUP, "w+")
-                remote_f = self.sftp.open(REMOTE_BACKUP, 'rb').read()
-                local_f.write(remote_f)
-                if fileExists(LOCAL_BACKUP):
-                    self.openChannel()
+
+                    LOCAL_BACKUP = DEST_DIR + "/" + self.address + "_" +\
+                        os.path.basename(REMOTE_BACKUP)
+                    LOCAL_BACKUP = os.path.expanduser(LOCAL_BACKUP)
+
+                    if (os.path.isfile(LOCAL_BACKUP)):
+                        os.remove(LOCAL_BACKUP)
+                    with scp.SCPClient(self.ssh_client.get_transport()) as s:
+                        s.get(REMOTE_BACKUP, local_path=DEST_DIR)
+                        s.close()
+                        os.rename(str(DEST_DIR + "/" +
+                                      os.path.basename(REMOTE_BACKUP)),
+                                  str(LOCAL_BACKUP))
+#                    self.sftp.get(str(REMOTE_BACKUP), str(LOCAL_BACKUP))
+#                    self.sftp.close()
+#                if os.path.isfile(LOCAL_BACKUP):
                     command = "md5sum " + REMOTE_BACKUP +\
                         " | awk '{print $1}'"
-                    md1 = self.execRemoteCommand(command)
-                    print md1
-                    md2 = hashlib.md5(LOCAL_BACKUP).hexdigest()
-                    print md2
+                    md1 = self.execRemoteCommand(command)[:-1]
+                    md2 = hashlib.md5(open(LOCAL_BACKUP,
+                                           'rb').read()).hexdigest()
                     if (md1 == md2):
-                        print_log("Bachup file transferred SUCCESSFULLY.")
+                        print_log("Backup file transferred " +
+                                  "SUCCESSFULLY and stored as:")
+                        print_log(LOCAL_BACKUP)
                         return True
                     else:
                         print_log("Remote backup file hash differs " +
@@ -196,11 +191,13 @@ class Host:
                         print_log("It is recommended to run backup " +
                                   "procedure again for the host.")
                         return False
-                else:
-                    print_log("An Error occured while transferring a" +
-                              "bachup archive file")
-                    print_log("Try retransfer it manually")
-                    return False
+            else:
+                print_log("An Error occured during archiving command " +
+                          "execution.")
+                print_log("Check \"NOPASSWD\" directive in sudoers file for " +
+                          "running script user.")
+                print_log("Or try transfer the file manually.")
+                return False
         else:
             return False
 
@@ -260,6 +257,7 @@ initTime = time.time()
 hostList = HostList(SERVER_LIST)
 if (len(hostList.hostset) > 0):
     i = 0
+    success = 0
     for host in hostList.hostset:
         i += 1
         mesg = "===> Processing host [{0:0" + str(len(
@@ -268,17 +266,27 @@ if (len(hostList.hostset) > 0):
         mesg += "/" + '{0:d}'.format(len(hostList.hostset))
         mesg += "] " + host.address + ":" + str(host.port)
         print_log(mesg)
-        host.sshConnect()
-        if host.isConnected:
-            result = False
+        if host.sshConnect():
+            result = None
             result = host.copyRemoteFile(sys.argv[1])
-            print result
-#             while not result:
-#                 if (time.time()-initTime > EXEC_TIME_LIMIT):
-#                     print_log("Execution time exceded provided time limit of"+
-#                               EXEC_TIME_LIMIT + " seconds." + os.linesep +
-#                               "Abotring." + os.linesep)
-#                     sys.exit(10)
+            while result is None:
+                elapsedTime = time.time() - initTime
+                if (elapsedTime % 1 == 0):
+                    print elapsedTime
+                if (elapsedTime > EXEC_TIME_LIMIT):
+                    print_log("Execution time exceded provided time limit of " +
+                              str(EXEC_TIME_LIMIT) + " seconds." + os.linesep +
+                              "Abotring." + os.linesep)
+                    sys.exit(10)
+            if result:
+                success += 1
+            else:
+                print_log("File transfer faild. Aborting.")
+            host.sshClose()
         else:
             print_log("Aborting.")
-        host.sshClose()
+    print_log("PROCESSING FINISHED. ")
+    mesg = "There were {0} hosts processed, out of which {1} " + \
+           "successfully completed. "
+    mesg = mesg.format(i, success)
+    print_log(mesg)
