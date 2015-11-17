@@ -9,6 +9,7 @@ import paramiko
 import scp
 import StringIO
 import hashlib
+import psutil
 # import subprocess
 # ----- Global variables declaration ---------------------------
 SERVER_LIST = "client_hosts"
@@ -251,7 +252,22 @@ if not os.path.isdir(DEST_DIR):
         print "I/O error({0}): {1}".format(ioe.errno, ioe.strerror)
         print_log("Destination folder can not be created. Check permissions.")
         sys.exit(3)
-
+# Checks if another instance of the current script has been executing
+# under the current user.
+pcount = 0
+for proc in psutil.process_iter():
+    try:
+        pinfo = proc.as_dict(attrs=['name', 'uids'])
+        if (pinfo['name'] == os.path.basename(__file__) and
+           pinfo['uids'][1] == os.getuid()):
+            pcount += 1
+        if pcount > 1:
+            print_log("There is another running " +
+                      pinfo['name'] +
+                      " detected. Aborting.")
+            sys.exit(4)
+    except psutil.NoSuchProcess:
+        pass
 # ---- main Body goes here ------------------------------------
 initTime = time.time()
 hostList = HostList(SERVER_LIST)
